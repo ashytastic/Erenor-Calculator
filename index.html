@@ -122,9 +122,9 @@
       background-repeat: no-repeat; background-position: right 15px center; cursor: pointer;
     }
     .input-sm {
-      width: 100%; padding: 8px 6px; background: var(--surface); border: 1px solid var(--border);
-      border-radius: 8px; color: var(--text); font-family: 'Rajdhani', sans-serif;
-      font-size: 18px; font-weight: 600; text-align: center; outline: none; transition: border-color .2s;
+      width: 100%; padding: 6px 4px; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 7px; color: var(--text); font-family: 'Rajdhani', sans-serif;
+      font-size: 15px; font-weight: 600; text-align: center; outline: none; transition: border-color .2s;
     }
     .input-sm:focus { border-color: var(--gold); }
 
@@ -175,11 +175,11 @@
     .tbl tbody tr:last-child td { border-bottom: none; }
     .tbl tbody tr:hover td { background: var(--card2); }
 
-    .price-grid { display: grid; grid-template-columns: 195px repeat(9, 1fr); gap: 8px; align-items: center; }
-    .pg-hdr { font-family: 'Cinzel', serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; text-align: center; padding: 3px 0 8px; white-space: nowrap; }
-    .pg-lbl { font-family: 'Cinzel', serif; font-size: 17px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); display: flex; flex-direction: column; gap: 2px; }
-    .pg-hint { font-family: 'Rajdhani', sans-serif; font-size: 14px; color: var(--text-muted); font-weight: 500; letter-spacing: 0; }
-    .pg-rate { text-align: center; font-size: 14px; padding: 3px 0; color: var(--text-muted); }
+    .price-grid { display: grid; grid-template-columns: 130px repeat(9, 1fr); gap: 5px; align-items: center; }
+    .pg-hdr { font-family: 'Cinzel', serif; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-align: center; padding: 2px 0 6px; }
+    .pg-lbl { font-family: 'Cinzel', serif; font-size: 14px; font-weight: 700; letter-spacing: 1px; color: var(--text-dim); display: flex; flex-direction: column; gap: 2px; }
+    .pg-hint { font-family: 'Rajdhani', sans-serif; font-size: 12px; color: var(--text-muted); font-weight: 500; letter-spacing: 0; }
+    .pg-rate { text-align: center; font-size: 12px; padding: 2px 0; color: var(--text-muted); }
 
     .rank-card { border-radius: 15px; border: 1px solid var(--border); background: var(--card); margin-bottom: 15px; overflow: hidden; }
     .rank-card-accent { height: 5px; }
@@ -206,7 +206,8 @@
 
     /* ── Scrollable wrappers for wide tables / grids ── */
     .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .scroll-x > * { min-width: max-content; }
+    /* Note: no min-width:max-content — price grid shrinks naturally on desktop,
+       scrolls on mobile where minmax column widths exceed viewport. */
 
     /* ── Rank-card input grid (responsive 4→2→2 col) ── */
     .rank-inputs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 18px; }
@@ -240,10 +241,10 @@
       .tbl td { padding: 10px 10px; }
       .gear-banner { font-size: 14px; padding: 9px 22px; }
       .rank-card-inner { padding: 16px 18px; }
-      .price-grid { grid-template-columns: 150px repeat(9, 1fr); gap: 6px; }
-      .pg-lbl { font-size: 14px; }
-      .pg-hdr { font-size: 12px; }
-      .pg-hint { font-size: 12px; }
+      .price-grid { grid-template-columns: 115px repeat(9, 1fr); gap: 5px; }
+      .pg-lbl { font-size: 13px; letter-spacing: 0.5px; }
+      .pg-hdr { font-size: 11px; }
+      .pg-hint { font-size: 11px; }
       .enh-levels-grid { grid-template-columns: repeat(5, 1fr); }
     }
 
@@ -1560,7 +1561,7 @@
             <div>
               <div className="app-title">Erenor Synthesis Calculator</div>
               <div className="app-subtitle">ArcheRage  Synthesis Simulator and Cost Optimizer</div>
-              <div className="app-subtitle">Made by Ash | Thanks to Ophellian & Rin for helping me test this</div>
+              <div className="app-subtitle">Made by Ash | Thanks Ophellian & Rin for helping me test this</div>
             </div>
             <div className="header-right">
               <div className="gear-group">
