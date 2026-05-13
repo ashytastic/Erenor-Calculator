@@ -204,15 +204,132 @@
     @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
     .fade-in { animation: fadeUp .22s ease; }
 
-    @media (max-width: 1200px) {
-      .content { padding: 21px; }
-      .g4 { grid-template-columns: repeat(2, 1fr); }
-      .g5 { grid-template-columns: repeat(3, 1fr); }
-      .price-grid { grid-template-columns: 135px repeat(9, 1fr); }
+    /* ── Scrollable wrappers for wide tables / grids ── */
+    .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .scroll-x > * { min-width: max-content; }
+
+    /* ── Rank-card input grid (responsive 4→2→2 col) ── */
+    .rank-inputs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin-bottom: 18px; }
+
+    /* ── Tablet (≤ 960px) ── */
+    @media (max-width: 960px) {
+      body { font-size: 17px; }
+      .app-header { padding: 14px 22px 12px; gap: 12px; }
       .app-title { font-size: 24px; }
+      .gear-btn { padding: 9px 16px; font-size: 15px; }
+      .theme-btn { padding: 9px 16px; font-size: 15px; }
+      .tab-bar { padding: 0 22px; }
+      .tab-btn { padding: 13px 20px; font-size: 14px; }
+      .content { padding: 18px 20px 56px; max-width: 100%; }
+      .card { padding: 18px 16px; }
+      .card-title { font-size: 14px; }
+      .field-label { font-size: 13px; }
+      .input, .sel { padding: 10px 12px; font-size: 17px; }
+      .input-sm { font-size: 15px; }
+      .g3 { grid-template-columns: 1fr 1fr; gap: 14px; }
+      .g4 { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+      .g5 { grid-template-columns: repeat(3, 1fr); gap: 12px; }
+      .rank-inputs { grid-template-columns: repeat(2, 1fr); gap: 14px; }
+      .stat-val { font-size: 22px; }
+      .stat-lbl { font-size: 12px; }
+      .grade-badge { font-size: 14px; }
+      .xp-bar-wrap { height: 30px; }
+      .xp-bar-label { font-size: 14px; }
+      .tbl { font-size: 16px; }
+      .tbl th { padding: 10px 10px; font-size: 13px; }
+      .tbl td { padding: 10px 10px; }
+      .gear-banner { font-size: 14px; padding: 9px 22px; }
+      .rank-card-inner { padding: 16px 18px; }
+      .price-grid { grid-template-columns: 150px repeat(9, 1fr); gap: 6px; }
+      .pg-lbl { font-size: 14px; }
+      .pg-hdr { font-size: 12px; }
+      .pg-hint { font-size: 12px; }
+      .enh-levels-grid { grid-template-columns: repeat(5, 1fr); }
     }
-    @media (max-width: 800px) {
-      .g3 { grid-template-columns: 1fr; }
+
+    /* ── Mobile (≤ 600px) ── */
+    @media (max-width: 600px) {
+      body { font-size: 14px; }
+
+      /* Header — stack gear-type selector below title row */
+      .app-header { padding: 12px 16px 10px; flex-direction: column; align-items: stretch; gap: 10px; }
+      .app-title { font-size: 18px; letter-spacing: 3px; }
+      .app-subtitle { font-size: 11px; letter-spacing: 3px; }
+      .header-right { justify-content: space-between; }
+      .gear-group { border-radius: 8px; }
+      .gear-btn { padding: 9px 12px; font-size: 13px; letter-spacing: 1px; gap: 5px; }
+      .theme-btn { padding: 9px 12px; font-size: 13px; gap: 5px; }
+
+      /* Tab bar — allow horizontal scroll so labels never truncate */
+      .tab-bar { padding: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+      .tab-bar::-webkit-scrollbar { display: none; }
+      .tab-btn { padding: 12px 16px; font-size: 13px; letter-spacing: 1px; gap: 5px; white-space: nowrap; flex-shrink: 0; }
+
+      .gear-banner { font-size: 13px; padding: 9px 16px; gap: 8px; }
+
+      /* Content */
+      .content { padding: 12px 10px 56px; max-width: 100%; }
+      .card { padding: 14px 12px; margin-bottom: 12px; border-radius: 12px; }
+      .card-title { font-size: 13px; margin-bottom: 12px; letter-spacing: 2px; }
+      .field-label { font-size: 12px; letter-spacing: 2px; margin-bottom: 5px; }
+      .input, .sel { padding: 10px 12px; font-size: 16px; border-radius: 8px; }
+      .input-sm { padding: 6px 4px; font-size: 14px; border-radius: 7px; }
+
+      /* Grids */
+      .g2 { gap: 10px; }
+      .g3 { grid-template-columns: 1fr; gap: 10px; }
+      .g4 { grid-template-columns: 1fr 1fr; gap: 10px; }
+      .g5 { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .rank-inputs { grid-template-columns: 1fr 1fr; gap: 10px; }
+      .gap8 { gap: 8px; } .gap12 { gap: 10px; }
+      .mb8 { margin-bottom: 8px; } .mb12 { margin-bottom: 12px; } .mb16 { margin-bottom: 16px; }
+
+      /* Stat boxes */
+      .stat-box { padding: 10px 6px; border-radius: 8px; }
+      .stat-val { font-size: 17px; }
+      .stat-lbl { font-size: 10px; letter-spacing: 1px; margin-top: 3px; }
+
+      /* Grade badge */
+      .grade-badge { font-size: 13px; padding: 2px 8px; border-radius: 5px; }
+
+      /* XP bar */
+      .xp-bar-wrap { height: 28px; border-radius: 6px; }
+      .xp-bar-label { font-size: 13px; }
+      .xp-overflow-glow { width: 4px; }
+
+      /* Chips */
+      .chip { font-size: 12px; padding: 2px 8px; letter-spacing: 1px; }
+
+      /* Tables */
+      .tbl { font-size: 14px; }
+      .tbl th { padding: 9px 8px; font-size: 12px; letter-spacing: 1px; }
+      .tbl td { padding: 9px 8px; }
+
+      /* Price grid — min column widths ensure inputs stay tappable */
+      .price-grid { grid-template-columns: 100px repeat(9, minmax(68px, 1fr)); gap: 5px; }
+      .pg-lbl { font-size: 13px; letter-spacing: 1px; }
+      .pg-hdr { font-size: 11px; padding: 3px 0 6px; }
+      .pg-hint { font-size: 11px; }
+      .pg-rate { font-size: 11px; }
+
+      /* Rank cards */
+      .rank-card { border-radius: 12px; margin-bottom: 10px; }
+      .rank-card-accent { height: 4px; }
+      .rank-card-inner { padding: 12px 10px; }
+
+      /* Enhancement card */
+      .enh-card { border-radius: 12px; margin-bottom: 10px; }
+      .enh-card-inner { padding: 12px 10px; }
+      .enh-levels-grid { grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 12px; }
+      .enh-level-box { padding: 8px 4px; border-radius: 8px; }
+
+      /* Notes */
+      .info-note { font-size: 14px; padding: 11px 13px; gap: 9px; }
+      .goal-note { font-size: 14px; padding: 11px 13px; gap: 9px; }
+      .empty-hint { padding: 14px; font-size: 14px; letter-spacing: 1px; }
+
+      /* Error */
+      .error-boundary { padding: 24px; margin: 16px; }
     }
   </style>
 </head>
@@ -801,7 +918,7 @@
               </div>
             </div>
 
-            <div className="g4 mb12">
+            <div className="rank-inputs mb12">
               <div>
                 <label className="field-label">Infusions</label>
                 <input type="number" min="0" className="input"
@@ -1092,6 +1209,7 @@
           <div className="card">
             <div className="card-title">Material Prices — Full Gold Cost per Item</div>
             <div style={{ overflowX: 'auto' }}>
+              <div className="scroll-x">
               <div className="price-grid">
                 <div />
                 {GRADES.map(function(g, i) {
@@ -1153,8 +1271,9 @@
                   );
                 })}
               </div>
+              </div>
             </div>
-            <div style={{ marginTop: '12px', fontSize: '17px', color: 'var(--text-muted)' }}>
+            <div style={{ marginTop: '12px', fontSize: '15px', color: 'var(--text-muted)' }}>
               Staff prices are shared across all gear types. Infusion prices are saved separately per type.
             </div>
           </div>
@@ -1181,7 +1300,7 @@
                   </button>
                 </div>
               </div>
-              <div style={{ fontSize: '17px', color: 'var(--text-muted)', maxWidth: '340px', lineHeight: '1.5' }}>
+              <div style={{ fontSize: '15px', color: 'var(--text-muted)', maxWidth: '340px', lineHeight: '1.5', flexShrink: 1 }}>
                 {procModel === 'safe'
                   ? 'Safe: buys enough material to guarantee the target XP with no procs. Result is certain.'
                   : 'Unsafe: assumes every synthesis procs at x1.75 average. Buys fewer items — result is NOT guaranteed.'}
@@ -1343,6 +1462,7 @@
           {enhRows.length > 0 && (
             <div className="card">
               <div className="card-title">{(ENH_LABEL[gearType] || 'Enhancement') + ' Level Reference'}</div>
+              <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
               <table className="tbl">
                 <thead>
                   <tr><th>Level</th><th>XP per Level</th><th>Cumulative XP</th><th>Status</th></tr>
@@ -1362,6 +1482,7 @@
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>
@@ -1439,7 +1560,7 @@
             <div>
               <div className="app-title">Erenor Synthesis Calculator</div>
               <div className="app-subtitle">ArcheRage  Synthesis Simulator and Cost Optimizer</div>
-              <div className="app-subtitle">Made by Ash | Thanks Ophellian & Rin for helping me test this</div>
+              <div className="app-subtitle">Made by Ash | Thanks to Ophellian & Rin for helping me test this</div>
             </div>
             <div className="header-right">
               <div className="gear-group">
