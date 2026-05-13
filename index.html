@@ -324,21 +324,38 @@
       return rows;
     }
 
-    /* optimizeRank: cheapest integer mix of infusions + staffs to cover xpNeeded */
+    /* optimizeRank: cheapest integer mix of infusions + staffs to cover xpNeeded.
+       A price of 0 means the item type is UNAVAILABLE at this rank (not free).
+       staP = 0 → only infusions considered.
+       infP = 0 → only staffs considered (pure-staff solutions only).
+       Both 0   → return zero items / zero cost (prices not set). */
     function optimizeRank(rank, xpNeeded, infP, staP, procMult) {
       if (xpNeeded <= 0) {
         return { inf: 0, sta: 0, cost: 0, totalXP: 0, overflow: Math.abs(xpNeeded) };
       }
-      /* procMult: 1.0 = safe (no proc), 1.75 = unsafe (avg proc assumed) */
-      var effInf = INF_XP   * procMult;
+      var effInf = INF_XP       * procMult;
       var effSta = STA_XP[rank] * procMult;
-      var maxNs  = Math.ceil(xpNeeded / effSta) + 1;
-      var best   = null;
+
+      /* Only iterate staff counts when staffs have a price (staP > 0 = available) */
+      var maxNs = staP > 0 ? Math.ceil(xpNeeded / effSta) + 1 : 0;
+      var best  = null;
+
       for (var ns = 0; ns <= maxNs; ns++) {
-        var xs   = ns * effSta;
-        var rem  = Math.max(0, xpNeeded - xs);
-        var ni   = rem > 0 ? Math.ceil(rem / effInf) : 0;
-        var tx   = xs + ni * effInf;
+        var xs  = ns * effSta;
+        var rem = Math.max(0, xpNeeded - xs);
+        var ni, tx;
+
+        if (rem <= 0) {
+          /* Staffs alone already cover it */
+          ni = 0;  tx = xs;
+        } else if (infP > 0) {
+          /* Fill the remainder with infusions */
+          ni = Math.ceil(rem / effInf);  tx = xs + ni * effInf;
+        } else {
+          /* Infusions unavailable; this staff count leaves a gap — skip */
+          continue;
+        }
+
         if (tx < xpNeeded) { continue; }
         var cost = ns * staP + ni * infP;
         var ovf  = tx - xpNeeded;
@@ -346,85 +363,128 @@
           best = { inf: ni, sta: ns, cost: cost, totalXP: tx, overflow: ovf };
         }
       }
-      if (!best) {
-        var ni2 = Math.ceil(xpNeeded / effInf);
-        best = { inf: ni2, sta: 0, cost: ni2 * infP, totalXP: ni2 * effInf, overflow: ni2 * effInf - xpNeeded };
-      }
+
+      /* No valid solution (both prices unknown / zero) */
+      if (!best) { return { inf: 0, sta: 0, cost: 0, totalXP: 0, overflow: 0 }; }
       return best;
     }
 
     /*
-      runOptimizer: globally cheapest plan with cross-rank pre-buying.
+      runOptimizer — two key correctness rules:
 
-      KEY CHANGES vs old version:
-      - procMult: 1.0 = safe (guarantees target), 1.75 = unsafe (assumes avg proc, buys fewer items)
-      - Eternal rank target = enhTarget only (NOT XP_REQ[8] + enhTarget).
-        Reaching Eternal is done by filling Mythic; the optimizer then only needs
-        to buy the enhancement XP (17105 / 3495 / 0) while AT Eternal.
+      1. FILL MUST STOP BELOW 100 %
+         Feeding items past the XP threshold immediately advances the rank, so
+         the fill phase must never complete the rank alone. When planning a
+         6-item overflow batch (obXP), the fill targets max(0, needed - obXP),
+         guaranteeing fill.totalXP < needed (proven: fill rounding ≤ one item
+         XP, which is always ≤ obXP because obXP = 6 × item XP).
+
+      2. OVERFLOW IS NOT ALWAYS CHEAPER
+         We compare the total cost of this rank PLUS the next rank for every
+         candidate plan and choose the cheapest:
+           • Option 0 – fill to 100 %, no overflow
+           • Option 1 – fill to 99.9 %, then 6-staff overflow batch
+           • Option 2 – fill to 99.9 %, then 6-infusion overflow batch
+         Only if an overflow option is genuinely cheaper does it get applied.
+
+      procMult: 1.0 = safe, 1.75 = unsafe avg proc.
+      Eternal target = enhTarget only (not XP_REQ[8]).
     */
     function runOptimizer(startRank, endRank, startXP, infPrices, staPrices, enhTarget, procMult) {
       var rows = [], carry = pNum(startXP), totalCost = 0;
 
-      /* Cheapest cost-per-effective-XP at each rank (accounts for procMult) */
-      var cheapCPX = [];
-      for (var n = 0; n < 9; n++) {
-        var ip = pNum(infPrices[n]);
-        var sp = pNum(staPrices[n]);
-        var ei = INF_XP    * procMult;
-        var es = STA_XP[n] * procMult;
-        if      (ip > 0 && sp > 0) { cheapCPX.push(Math.min(ip / ei, sp / es)); }
-        else if (ip > 0)           { cheapCPX.push(ip / ei); }
-        else if (sp > 0)           { cheapCPX.push(sp / es); }
-        else                       { cheapCPX.push(0); }
-      }
-
       for (var r = startRank; r <= endRank; r++) {
-        /*
-          For Eternal (rank 8) as the final stop, the XP target is just enhTarget
-          (weapon: 17105, armor: 3495, accessory: 0).
-          We do NOT require filling XP_REQ[8] = 54420 — reaching Eternal happens
-          automatically once Mythic's bar is filled.
-          For all other ranks, the target is XP_REQ[r] as normal.
-        */
         var xpTarget = (r === 8 && r === endRank) ? enhTarget : XP_REQ[r];
         var needed   = xpTarget - carry;
 
-        /* Already covered by carry from a cheaper previous rank */
+        /* Already fully covered by carry from a previous rank */
         if (needed <= 0) {
-          var carryIn = carry;
+          var ci = carry;
           carry = Math.max(0, carry - xpTarget);
-          rows.push({ r: r, xpNeeded: 0, carry: carryIn, xpTarget: xpTarget,
-                      inf: 0, sta: 0, cost: 0, totalXP: 0, overflow: Math.max(0, -needed),
-                      preCovered: true });
+          rows.push({ r:r, xpNeeded:0, carry:ci, xpTarget:xpTarget,
+                      inf:0, sta:0, cost:0, totalXP:0, overflow:Math.max(0,-needed),
+                      preCovered:true, ovBatchXP:0, ovBatchInf:0, ovBatchSta:0 });
           continue;
         }
 
-        /* Cross-rank pre-buying */
-        var totalToBuy = needed;
-        var myRate     = cheapCPX[r];
+        var infP   = pNum(infPrices[r]);
+        /* Ayanad Staffs are not available below Celestial (rank < 3) */
+        var staP   = r < 3 ? 0 : pNum(staPrices[r]);
+        var effInf = INF_XP * procMult,   effSta = STA_XP[r] * procMult;
 
-        if (myRate > 0) {
-          for (var m = r + 1; m <= endRank; m++) {
-            var mRate   = cheapCPX[m];
-            var mTarget = (m === 8 && m === endRank) ? enhTarget : XP_REQ[m];
-            if (mRate === 0)    { break; }  /* unknown price */
-            if (mRate < myRate) { break; }  /* cheaper rank ahead */
-            totalToBuy += mTarget;
-          }
+        /* Next-rank info for the 1-rank lookahead cost comparison */
+        var nr       = r + 1;
+        var nrXpTgt  = (r < endRank) ? ((nr===8 && nr===endRank) ? enhTarget : XP_REQ[nr]) : 0;
+        var infP_nr  = (r < endRank) ? pNum(infPrices[nr])  : 0;
+        var staP_nr  = (r < endRank) ? pNum(staPrices[nr])  : 0;
+        var hasNrPx  = nrXpTgt > 0 && (infP_nr > 0 || staP_nr > 0);
+
+        /*
+          Build candidates. For each overflow option:
+            fill target = max(0, needed - obXP)   ← always < needed so rank won't
+                                                      complete during the fill phase
+          After filling, ONE synthesis of 6 items completes the rank + creates carry.
+        */
+        var cands = [];
+
+        /* Option 0: no overflow — standard fill to exactly 100 % */
+        var f0 = optimizeRank(r, needed, infP, staP, procMult);
+        cands.push({ obInf:0, obSta:0, obCost:0, obXP:0, fill:f0 });
+
+        /* Option 1: 6-staff overflow batch (staffs give more XP → more carry) */
+        if (r < endRank && staP > 0) {
+          var t1 = Math.max(0, needed - 6*effSta);
+          var f1 = t1 > 0 ? optimizeRank(r, t1, infP, staP, procMult)
+                          : { inf:0, sta:0, cost:0, totalXP:0, overflow:0 };
+          cands.push({ obInf:0, obSta:6, obCost:6*staP, obXP:6*effSta, fill:f1 });
         }
 
-        var infP = pNum(infPrices[r]);
-        var staP = pNum(staPrices[r]);
-        var sol  = optimizeRank(r, totalToBuy, infP, staP, procMult);
-        totalCost += sol.cost;
+        /* Option 2: 6-infusion overflow batch */
+        if (r < endRank && infP > 0) {
+          var t2 = Math.max(0, needed - 6*effInf);
+          var f2 = t2 > 0 ? optimizeRank(r, t2, infP, staP, procMult)
+                          : { inf:0, sta:0, cost:0, totalXP:0, overflow:0 };
+          cands.push({ obInf:6, obSta:0, obCost:6*infP, obXP:6*effInf, fill:f2 });
+        }
 
-        rows.push({ r: r, xpNeeded: Math.max(0, needed), carry: carry, xpTarget: xpTarget,
-                    inf: sol.inf, sta: sol.sta, cost: sol.cost, totalXP: sol.totalXP,
-                    overflow: sol.overflow, preCovered: false });
+        /* Score each candidate: cost(rank N) + cost(rank N+1 given resulting carry)
+           Pick the lowest total. */
+        var best = null, bestScore = Infinity;
 
-        carry = Math.max(0, carry + sol.totalXP - xpTarget);
+        for (var ki = 0; ki < cands.length; ki++) {
+          var cd     = cands[ki];
+          var carryC = Math.max(0, carry + cd.fill.totalXP + cd.obXP - xpTarget);
+          var nrCost = 0;
+
+          if (hasNrPx) {
+            var nrNeed = Math.max(0, nrXpTgt - carryC);
+            nrCost = nrNeed > 0 ? optimizeRank(nr, nrNeed, infP_nr, staP_nr, procMult).cost : 0;
+          }
+
+          var score = cd.fill.cost + cd.obCost + nrCost;
+          if (score < bestScore) { bestScore = score; best = { cd:cd, carryOut:carryC }; }
+        }
+
+        var bc       = best.cd;
+        var rankCost = bc.fill.cost + bc.obCost;
+        totalCost   += rankCost;
+
+        rows.push({
+          r:r, xpNeeded:Math.max(0,needed), carry:carry, xpTarget:xpTarget,
+          inf: bc.fill.inf + bc.obInf,
+          sta: bc.fill.sta + bc.obSta,
+          cost: rankCost,
+          totalXP: bc.fill.totalXP + bc.obXP,
+          overflow: best.carryOut,
+          preCovered: false,
+          ovBatchXP:  bc.obXP,
+          ovBatchInf: bc.obInf,
+          ovBatchSta: bc.obSta
+        });
+
+        carry = best.carryOut;
       }
-      return { rows: rows, totalCost: totalCost, finalOverflow: Math.max(0, carry) };
+      return { rows:rows, totalCost:totalCost, finalOverflow:Math.max(0,carry) };
     }
 
     /* ═══════════════════════ ERROR BOUNDARY ═══════════════════════ */
@@ -670,13 +730,21 @@
                 )}
               </div>
               <div>
-                <label className="field-label">Ayanad Staffs</label>
+                <label className="field-label" style={{ color: rank < 3 ? 'var(--text-muted)' : '' }}>
+                  Ayanad Staffs{rank < 3 ? ' (N/A — not worth it)' : ''}
+                </label>
                 <input type="number" min="0" className="input"
-                  value={row.staffs}
-                  onChange={function(e) { onSta(e.target.value); }}
-                  placeholder="0"
-                  style={{ borderColor: sta > 0 ? c + '99' : '' }} />
-                {pNum(staPrice) > 0 && sta > 0 && (
+                  value={rank < 3 ? '' : row.staffs}
+                  onChange={function(e) { if (rank >= 3) { onSta(e.target.value); } }}
+                  placeholder={rank < 3 ? 'N/A' : '0'}
+                  disabled={rank < 3}
+                  title={rank < 3 ? 'Ayanad Staffs are not cost-effective below Celestial' : ''}
+                  style={{
+                    borderColor: rank >= 3 && sta > 0 ? c + '99' : '',
+                    opacity: rank < 3 ? 0.3 : 1,
+                    cursor: rank < 3 ? 'not-allowed' : '',
+                  }} />
+                {rank >= 3 && pNum(staPrice) > 0 && sta > 0 && (
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                     {'= ' + fmtG(staCost)}
                   </div>
@@ -690,11 +758,15 @@
                   placeholder="0" />
               </div>
               <div>
-                <label className="field-label">Staff Price (g)</label>
+                <label className="field-label" style={{ color: rank < 3 ? 'var(--text-muted)' : '' }}>
+                  Staff Price (g){rank < 3 ? ' (N/A)' : ''}
+                </label>
                 <input type="number" min="0" className="input"
-                  value={staPrice}
-                  onChange={function(e) { onStaPrice(e.target.value); }}
-                  placeholder="0" />
+                  value={rank < 3 ? '' : staPrice}
+                  onChange={function(e) { if (rank >= 3) { onStaPrice(e.target.value); } }}
+                  placeholder={rank < 3 ? 'N/A' : '0'}
+                  disabled={rank < 3}
+                  style={{ opacity: rank < 3 ? 0.3 : 1, cursor: rank < 3 ? 'not-allowed' : '' }} />
               </div>
             </div>
 
@@ -956,14 +1028,22 @@
                 <div className="pg-lbl">
                   <span>Ayanad Staff</span>
                   <span className="pg-hint">5,600-9,046 XP</span>
+                  <span className="pg-hint" style={{ color: 'var(--danger)', opacity: 0.8 }}>Celestial+ only</span>
                 </div>
                 {GRADES.map(function(_, i) {
+                  var disabled = i < 3; /* Arcane/Heroic/Unique not worth it */
                   return (
                     <input key={i} type="number" min="0" className="input-sm"
-                      value={curSta[i]}
-                      onChange={function(e) { setStaPrice(i, e.target.value); }}
-                      placeholder="0"
-                      style={{ borderColor: pNum(curSta[i]) > 0 ? GC[i] + '88' : '' }} />
+                      value={disabled ? '' : curSta[i]}
+                      onChange={function(e) { if (!disabled) { setStaPrice(i, e.target.value); } }}
+                      placeholder={disabled ? 'N/A' : '0'}
+                      disabled={disabled}
+                      title={disabled ? 'Ayanad Staffs are not cost-effective below Celestial' : ''}
+                      style={{
+                        borderColor: !disabled && pNum(curSta[i]) > 0 ? GC[i] + '88' : '',
+                        opacity: disabled ? 0.25 : 1,
+                        cursor: disabled ? 'not-allowed' : '',
+                      }} />
                   );
                 })}
 
@@ -1110,9 +1190,8 @@
                     var staCost = row.sta * staP;
                     var xpCov   = row.carry + row.totalXP;
 
-                    /* Check if this rank is buying extra for future ranks (pre-buying) */
-                    var preBuyXP    = row.totalXP - row.xpNeeded;
-                    var isPreBuying = !row.preCovered && preBuyXP > 0;
+                    /* Overflow batch added at this rank for the next rank */
+                    var hasOvBatch  = !row.preCovered && row.ovBatchXP > 0;
                     var isEternal   = row.r === 8 && row.r === opt.endRank;
 
                     return (
@@ -1140,9 +1219,9 @@
                                     reach only
                                   </div>
                                 )}
-                                {isPreBuying && (
+                                {hasOvBatch && (
                                   <div style={{ fontSize: '9px', color: '#a060e8', marginTop: '2px' }}>
-                                    {'+' + fmt(preBuyXP) + ' pre-bought for next rank(s)'}
+                                    {'+ 6-item overflow: +' + fmt(row.ovBatchXP) + ' XP carried forward'}
                                   </div>
                                 )}
                               </span>
