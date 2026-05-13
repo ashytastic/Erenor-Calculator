@@ -370,25 +370,37 @@
     }
 
     /*
-      runOptimizer — two key correctness rules:
+      runOptimizer — multi-level fill comparison for every rank and overflow type.
 
-      1. FILL MUST STOP BELOW 100 %
-         Feeding items past the XP threshold immediately advances the rank, so
-         the fill phase must never complete the rank alone. When planning a
-         6-item overflow batch (obXP), the fill targets max(0, needed - obXP),
-         guaranteeing fill.totalXP < needed (proven: fill rounding ≤ one item
-         XP, which is always ≤ obXP because obXP = 6 × item XP).
+      The game enforces a 6-item-per-synthesis limit. The optimal use of this is:
+        1. Fill the bar cheaply to some level below 100 %  (multiple synthesis events)
+        2. Fire ONE final synthesis of exactly 6 items that completes the rank
+           and carries the surplus XP into the next rank(s).
 
-      2. OVERFLOW IS NOT ALWAYS CHEAPER
-         We compare the total cost of this rank PLUS the next rank for every
-         candidate plan and choose the cheapest:
-           • Option 0 – fill to 100 %, no overflow
-           • Option 1 – fill to 99.9 %, then 6-staff overflow batch
-           • Option 2 – fill to 99.9 %, then 6-infusion overflow batch
-         Only if an overflow option is genuinely cheaper does it get applied.
+      For every overflow type (6 staffs, 6 infusions) the optimizer evaluates
+      THREE fill levels and picks the combination with the lowest total cost
+      at this rank AND the next rank:
 
-      procMult: 1.0 = safe, 1.75 = unsafe avg proc.
-      Eternal target = enhTarget only (not XP_REQ[8]).
+        Level A — minimum fill
+          max(0, needed − obXP) XP before the 6-item batch. When obXP ≥ needed
+          this is zero — the batch alone completes the rank. Produces the smallest
+          carry but also the lowest fill cost.
+
+        Level B — skip-next-rank fill  ← the critical missing piece
+          Fill to exactly (nrXpTgt − obXP + needed) XP so the carry into rank N+1
+          equals nrXpTgt. Rank N+1 costs nothing.
+          Works at ANY rank pair — e.g. fill Arcane to 95 % then 6 infusions
+          to skip Heroic; or fill Legendary then 6 staffs to skip Mythic.
+
+        Level C — maximum fill
+          floor((needed−1)/itemXP) items. Maximises overflow beyond rank N+1,
+          potentially skipping N+2 as well when carry is large enough.
+
+      Both pure-infusion fills and the cheapest optimizeRank mix are tried for
+      levels B and C so the cheapest path is always found.
+
+      procMult: 1.0 = safe (guaranteed), 1.75 = unsafe (avg proc assumed).
+      Eternal target = enhTarget only (not the full XP_REQ[8] bar).
     */
     function runOptimizer(startRank, endRank, startXP, infPrices, staPrices, enhTarget, procMult) {
       var rows = [], carry = pNum(startXP), totalCost = 0;
@@ -397,7 +409,7 @@
         var xpTarget = (r === 8 && r === endRank) ? enhTarget : XP_REQ[r];
         var needed   = xpTarget - carry;
 
-        /* Already fully covered by carry from a previous rank */
+        /* Fully covered by carry-over from a cheaper earlier rank */
         if (needed <= 0) {
           var ci = carry;
           carry = Math.max(0, carry - xpTarget);
@@ -408,81 +420,153 @@
         }
 
         var infP   = pNum(infPrices[r]);
-        /* Ayanad Staffs are not available below Celestial (rank < 3) */
-        var staP   = r < 3 ? 0 : pNum(staPrices[r]);
-        var effInf = INF_XP * procMult,   effSta = STA_XP[r] * procMult;
+        var staP   = r < 3 ? 0 : pNum(staPrices[r]); /* staffs unavailable below Celestial */
+        var effInf = INF_XP * procMult;
+        var effSta = STA_XP[r] * procMult;
 
-        /* Next-rank info for the 1-rank lookahead cost comparison */
-        var nr       = r + 1;
-        var nrXpTgt  = (r < endRank) ? ((nr===8 && nr===endRank) ? enhTarget : XP_REQ[nr]) : 0;
-        var infP_nr  = (r < endRank) ? pNum(infPrices[nr])  : 0;
-        var staP_nr  = (r < endRank) ? pNum(staPrices[nr])  : 0;
-        var hasNrPx  = nrXpTgt > 0 && (infP_nr > 0 || staP_nr > 0);
+        /* Next-rank info for the lookahead cost comparison */
+        var nr      = r + 1;
+        var nrXpTgt = r < endRank ? ((nr===8 && nr===endRank) ? enhTarget : XP_REQ[nr]) : 0;
+        var infP_nr = r < endRank ? pNum(infPrices[nr]) : 0;
+        var staP_nr = r < endRank ? (nr < 3 ? 0 : pNum(staPrices[nr])) : 0;
+        var hasNrPx = nrXpTgt > 0 && (infP_nr > 0 || staP_nr > 0);
+
+        /* Maximum fill counts that don't complete the rank (for Levels B and C) */
+        var maxFillInfN = infP > 0 ? Math.floor((needed - 1) / effInf) : 0;
+        var maxFillStaN = staP > 0 ? Math.floor((needed - 1) / effSta) : 0;
+
+        /* ── Best-plan tracker ── */
+        var bestSc   = Infinity;
+        var bestPlan = null;
 
         /*
-          Build candidates. For each overflow option:
-            fill target = max(0, needed - obXP)   ← always < needed so rank won't
-                                                      complete during the fill phase
-          After filling, ONE synthesis of 6 items completes the rank + creates carry.
+          Evaluate one candidate plan: (fill XP already in rank) + (6-item overflow batch).
+          Safety: when obXP > 0 the fill must NOT complete the rank (fillXP < needed).
+          Score = cost(fill) + cost(overflow batch) + cost(rank N+1 given the carry).
         */
-        var cands = [];
-
-        /* Option 0: no overflow — standard fill to exactly 100 % */
-        var f0 = optimizeRank(r, needed, infP, staP, procMult);
-        cands.push({ obInf:0, obSta:0, obCost:0, obXP:0, fill:f0 });
-
-        /* Option 1: 6-staff overflow batch (staffs give more XP → more carry) */
-        if (r < endRank && staP > 0) {
-          var t1 = Math.max(0, needed - 6*effSta);
-          var f1 = t1 > 0 ? optimizeRank(r, t1, infP, staP, procMult)
-                          : { inf:0, sta:0, cost:0, totalXP:0, overflow:0 };
-          cands.push({ obInf:0, obSta:6, obCost:6*staP, obXP:6*effSta, fill:f1 });
-        }
-
-        /* Option 2: 6-infusion overflow batch */
-        if (r < endRank && infP > 0) {
-          var t2 = Math.max(0, needed - 6*effInf);
-          var f2 = t2 > 0 ? optimizeRank(r, t2, infP, staP, procMult)
-                          : { inf:0, sta:0, cost:0, totalXP:0, overflow:0 };
-          cands.push({ obInf:6, obSta:0, obCost:6*infP, obXP:6*effInf, fill:f2 });
-        }
-
-        /* Score each candidate: cost(rank N) + cost(rank N+1 given resulting carry)
-           Pick the lowest total. */
-        var best = null, bestScore = Infinity;
-
-        for (var ki = 0; ki < cands.length; ki++) {
-          var cd     = cands[ki];
-          var carryC = Math.max(0, carry + cd.fill.totalXP + cd.obXP - xpTarget);
+        var tryPlan = function(fillXP, fillCost, fillInf, fillSta,
+                                obXP,   obCost,  obInf,  obSta) {
+          if (fillXP < 0) { return; }
+          if (obXP > 0 && fillXP >= needed) { return; } /* fill alone would advance rank */
+          var carryC = Math.max(0, carry + fillXP + obXP - xpTarget);
           var nrCost = 0;
-
           if (hasNrPx) {
-            var nrNeed = Math.max(0, nrXpTgt - carryC);
-            nrCost = nrNeed > 0 ? optimizeRank(nr, nrNeed, infP_nr, staP_nr, procMult).cost : 0;
+            var nn = Math.max(0, nrXpTgt - carryC);
+            if (nn > 0) { nrCost = optimizeRank(nr, nn, infP_nr, staP_nr, procMult).cost; }
+          }
+          var sc = fillCost + obCost + nrCost;
+          if (sc < bestSc) {
+            bestSc   = sc;
+            bestPlan = { carryOut: carryC,
+                         fillInf: fillInf, fillSta: fillSta,
+                         fillCost: fillCost, fillXP: fillXP,
+                         obInf: obInf, obSta: obSta, obCost: obCost, obXP: obXP };
+          }
+        };
+
+        /* Helper: try a pure-infusion fill of niInf items before an overflow batch */
+        var tryInfFill = function(niInf, obXP, obCost, obInf, obSta) {
+          if (infP <= 0 || niInf <= 0) { return; }
+          var xp = niInf * effInf;
+          tryPlan(xp, niInf * infP, niInf, 0, obXP, obCost, obInf, obSta);
+        };
+
+        /* ── Option 0: no overflow — fill straight to 100 % ── */
+        var f0 = optimizeRank(r, needed, infP, staP, procMult);
+        tryPlan(f0.totalXP, f0.cost, f0.inf, f0.sta, 0, 0, 0, 0);
+
+        /* ── Overflow options ── */
+        var obArr = [];
+        if (r < endRank && staP > 0) {
+          obArr.push({ obInf:0, obSta:6, obCost:6*staP, obXP:6*effSta });
+        }
+        if (r < endRank && infP > 0) {
+          obArr.push({ obInf:6, obSta:0, obCost:6*infP, obXP:6*effInf });
+        }
+
+        for (var oi = 0; oi < obArr.length; oi++) {
+          var ob = obArr[oi];
+
+          /* ── Level A: minimum fill ──
+             Just enough so the 6-item batch completes the rank.
+             When obXP >= needed this is zero (batch alone suffices). */
+          var t_A = Math.max(0, needed - ob.obXP);
+          if (t_A === 0) {
+            tryPlan(0, 0, 0, 0, ob.obXP, ob.obCost, ob.obInf, ob.obSta);
+          } else {
+            /* cheapest mix */
+            var fA = optimizeRank(r, t_A, infP, staP, procMult);
+            if (fA.totalXP < needed) {
+              tryPlan(fA.totalXP, fA.cost, fA.inf, fA.sta,
+                      ob.obXP, ob.obCost, ob.obInf, ob.obSta);
+            }
+            /* also try pure-infusion fill at t_A (different cost profile) */
+            tryInfFill(Math.min(Math.ceil(t_A / effInf), maxFillInfN),
+                       ob.obXP, ob.obCost, ob.obInf, ob.obSta);
           }
 
-          var score = cd.fill.cost + cd.obCost + nrCost;
-          if (score < bestScore) { bestScore = score; best = { cd:cd, carryOut:carryC }; }
+          /* ── Level B: skip-next-rank fill ──
+             Fill to exactly the XP level where the overflow carry = nrXpTgt,
+             making rank N+1 cost zero. Works at every rank pair:
+               Arcane  → fill to ~95 % + 6 infusions → skips Heroic
+               Legendary → fill to ~75 % + 6 staffs  → skips Mythic (and beyond)
+             Only applicable when ob alone doesn't already skip N+1 (t_B > 0). */
+          if (hasNrPx) {
+            var t_B = nrXpTgt - ob.obXP + needed; /* fill so that carryC = nrXpTgt */
+            if (t_B > 0 && t_B < needed) {
+              /* cheapest mix to cover t_B */
+              var fB = optimizeRank(r, t_B, infP, staP, procMult);
+              if (fB.totalXP < needed) {
+                tryPlan(fB.totalXP, fB.cost, fB.inf, fB.sta,
+                        ob.obXP, ob.obCost, ob.obInf, ob.obSta);
+              }
+              /* pure-infusion fill at t_B */
+              tryInfFill(Math.min(Math.ceil(t_B / effInf), maxFillInfN),
+                         ob.obXP, ob.obCost, ob.obInf, ob.obSta);
+              /* pure-staff fill at t_B (only when staffs available for fill) */
+              if (staP > 0) {
+                var nsB = Math.min(Math.ceil(t_B / effSta), maxFillStaN);
+                if (nsB > 0 && nsB * effSta < needed) {
+                  tryPlan(nsB * effSta, nsB * staP, 0, nsB,
+                          ob.obXP, ob.obCost, ob.obInf, ob.obSta);
+                }
+              }
+            }
+          }
+
+          /* ── Level C: maximum fill ──
+             Maximises the overflow carry, potentially skipping N+2 as well.
+             Fill every slot up to the last item boundary below the threshold. */
+          if (maxFillInfN > 0) {
+            tryInfFill(maxFillInfN, ob.obXP, ob.obCost, ob.obInf, ob.obSta);
+          }
+          if (maxFillStaN > 0 && staP > 0) {
+            tryPlan(maxFillStaN * effSta, maxFillStaN * staP, 0, maxFillStaN,
+                    ob.obXP, ob.obCost, ob.obInf, ob.obSta);
+          }
         }
 
-        var bc       = best.cd;
-        var rankCost = bc.fill.cost + bc.obCost;
+        /* ── Apply the best plan found ── */
+        if (!bestPlan) {
+          bestPlan = { carryOut:0, fillInf:0, fillSta:0, fillCost:0, fillXP:0,
+                       obInf:0, obSta:0, obCost:0, obXP:0 };
+        }
+        var bc       = bestPlan;
+        var rankCost = bc.fillCost + bc.obCost;
         totalCost   += rankCost;
 
         rows.push({
           r:r, xpNeeded:Math.max(0,needed), carry:carry, xpTarget:xpTarget,
-          inf: bc.fill.inf + bc.obInf,
-          sta: bc.fill.sta + bc.obSta,
+          inf: bc.fillInf + bc.obInf,
+          sta: bc.fillSta + bc.obSta,
           cost: rankCost,
-          totalXP: bc.fill.totalXP + bc.obXP,
-          overflow: best.carryOut,
+          totalXP: bc.fillXP + bc.obXP,
+          overflow: bc.carryOut,
           preCovered: false,
-          ovBatchXP:  bc.obXP,
-          ovBatchInf: bc.obInf,
-          ovBatchSta: bc.obSta
+          ovBatchXP: bc.obXP, ovBatchInf: bc.obInf, ovBatchSta: bc.obSta
         });
 
-        carry = best.carryOut;
+        carry = bc.carryOut;
       }
       return { rows:rows, totalCost:totalCost, finalOverflow:Math.max(0,carry) };
     }
@@ -1133,7 +1217,7 @@
             )}
             {procModel === 'unsafe' && (
               <div className="info-note">
-                Unsafe model: quantities assume x1.75 average proc per synthesis — you may need more or fewer items on any given session.
+                Unsafe model: quantities assume x1.75 average proc per synthesis. ~20% proc chance means results are probabilistic — you may need more or fewer items on any given session.
               </div>
             )}
           </div>
